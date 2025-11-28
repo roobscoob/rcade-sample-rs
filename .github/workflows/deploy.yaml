@@ -49,11 +49,6 @@ jobs:
           key: ${{ runner.os }}-trunk-${{ hashFiles('**/Cargo.lock') }}
       - name: Install Trunk
         run: cargo install --locked trunk
-      - name: Debug directory structure
-        run: |
-          pwd
-          ls -la
-          ls -la host/ || echo "host directory not found"
       - name: Build Trunk project
         run: trunk build --release --config trunk.toml
       - name: Deploy to RCade
