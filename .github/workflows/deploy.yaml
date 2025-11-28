@@ -48,6 +48,7 @@ jobs:
           path: ~/.cargo/bin/trunk
           key: ${{ runner.os }}-trunk-${{ hashFiles('**/Cargo.lock') }}
       - name: Install Trunk
+        if: steps.cache-trunk.outputs.cache-hit != 'true'
         run: cargo install --locked trunk
       - name: Build Trunk project
         run: trunk build --release
