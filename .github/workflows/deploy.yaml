@@ -20,10 +20,41 @@ jobs:
         with:
           toolchain: stable
           target: wasm32-unknown-unknown
-          oevrride: true
+          override: true
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-git-
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-build-
+      - name: Cache Trunk
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/trunk
+          key: ${{ runner.os }}-trunk-${{ hashFiles('**/Cargo.lock') }}
       - name: Install Trunk
         run: cargo install --locked trunk
+      - name: Debug directory structure
+        run: |
+          pwd
+          ls -la
+          ls -la host/ || echo "host directory not found"
       - name: Build Trunk project
-        run: trunk build --release
+        run: trunk build --release --config trunk.toml
       - name: Deploy to RCade
         uses: fcjr/rcade/action-deploy@main
