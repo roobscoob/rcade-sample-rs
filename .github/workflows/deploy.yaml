@@ -50,6 +50,6 @@ jobs:
       - name: Install Trunk
         run: cargo install --locked trunk
       - name: Build Trunk project
-        run: trunk build --release --config trunk.toml
+        run: trunk build --release
       - name: Deploy to RCade
         uses: fcjr/rcade/action-deploy@main
