@@ -43,6 +43,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-build-
       - name: Cache Trunk
+        id: cache-trunk
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/trunk
