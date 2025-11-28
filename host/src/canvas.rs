@@ -20,13 +20,6 @@ pub fn create_and_setup_canvas() -> Result<HtmlCanvasElement, JsValue> {
     // 3. Set the ID and initial dimensions (matching the CSS resolution concept)
     canvas.set_id("gameCanvas");
 
-    // We'll set a fixed internal resolution for the pixel art effect.
-    // The CSS will scale this up to the viewport size.
-    const RESOLUTION_WIDTH: u32 = 336;
-    const RESOLUTION_HEIGHT: u32 = 262;
-    canvas.set_width(RESOLUTION_WIDTH);
-    canvas.set_height(RESOLUTION_HEIGHT);
-
     // 4. Apply the necessary nearest-neighbor styling via CSS property
     let style = canvas.style();
 
@@ -43,6 +36,9 @@ pub fn create_and_setup_canvas() -> Result<HtmlCanvasElement, JsValue> {
 
     // 5. Append the canvas to the document body
     body.append_child(&canvas)?;
+
+    canvas.set_width(canvas.client_width() as u32);
+    canvas.set_height(canvas.client_height() as u32);
 
     web_sys::console::debug_1(&"Canvas created and appended successfully!".into());
 
