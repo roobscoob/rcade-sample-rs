@@ -22,8 +22,8 @@ pub fn create_and_setup_canvas() -> Result<HtmlCanvasElement, JsValue> {
 
     // We'll set a fixed internal resolution for the pixel art effect.
     // The CSS will scale this up to the viewport size.
-    const RESOLUTION_WIDTH: u32 = 320;
-    const RESOLUTION_HEIGHT: u32 = 180;
+    const RESOLUTION_WIDTH: u32 = 336;
+    const RESOLUTION_HEIGHT: u32 = 262;
     canvas.set_width(RESOLUTION_WIDTH);
     canvas.set_height(RESOLUTION_HEIGHT);
 
