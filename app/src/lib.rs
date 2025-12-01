@@ -1,18 +1,19 @@
 pub mod hook;
 
+use crate::hook::get_offscreen_canvas;
 use rand::Rng;
+use rcade_plugin_input_classic::ClassicController;
+use rcade_plugin_input_classic::state::ControllerState;
 use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use web_sys::js_sys;
-use web_sys::{DedicatedWorkerGlobalScope, OffscreenCanvas, OffscreenCanvasRenderingContext2d};
-
-use crate::hook::get_offscreen_canvas;
+use web_sys::{DedicatedWorkerGlobalScope, OffscreenCanvasRenderingContext2d};
 
 // --- Config ---
-const PARTICLE_COUNT: usize = 120;
-const CONNECT_DISTANCE: f64 = 110.0;
+const PARTICLE_COUNT: usize = 350;
+const CONNECT_DISTANCE: f64 = 35.0;
 
 struct Particle {
     x: f64,
@@ -29,14 +30,30 @@ impl Particle {
             x: rng.random_range(0.0..w),
             y: rng.random_range(0.0..h),
             // Slightly faster velocity since there is no interaction to "push" them
-            vx: rng.random_range(-1.0..1.0),
-            vy: rng.random_range(-1.0..1.0),
+            vx: rng.random_range(-0.2..0.2),
+            vy: rng.random_range(-0.2..0.2),
             // Neon Cyan/Blue/Purple Palette
-            color: format!("hsl({}, 80%, 30%)", rng.random_range(180..280)),
+            color: format!("hsl({}, 50%, 60%)", rng.random_range(100..300)),
         }
     }
 
-    fn update(&mut self, w: f64, h: f64) {
+    fn update(&mut self, w: f64, h: f64, st: &ControllerState) {
+        if st.player1_up {
+            self.y += 1.0;
+        }
+
+        if st.player1_down {
+            self.y -= 1.0;
+        }
+
+        if st.player1_left {
+            self.x += 1.0;
+        }
+
+        if st.player1_right {
+            self.x -= 1.0;
+        }
+
         self.x += self.vx;
         self.y += self.vy;
 
@@ -55,10 +72,15 @@ struct SimulationState {
     particles: Vec<Particle>,
     width: f64,
     height: f64,
+    controller: ClassicController,
 }
 
 #[wasm_bindgen(start)]
-pub fn start() -> Result<(), JsValue> {
+pub async fn start() -> Result<(), JsValue> {
+    console_error_panic_hook::set_once();
+
+    let controller = ClassicController::acquire().await.unwrap();
+
     // Shared State
     let state: Rc<RefCell<Option<SimulationState>>> = Rc::new(RefCell::new(None));
 
@@ -83,6 +105,7 @@ pub fn start() -> Result<(), JsValue> {
         particles,
         width,
         height,
+        controller,
     });
 
     // Start the infinite loop
@@ -97,7 +120,19 @@ fn request_animation_loop(state: Rc<RefCell<Option<SimulationState>>>) {
 
     *g.borrow_mut() = Some(Closure::wrap(Box::new(move || {
         if let Some(sim) = state.borrow_mut().as_mut() {
-            render(sim);
+            let st = sim.controller.state();
+
+            if st.player1_a {
+                for _ in 0..10 {
+                    sim.particles.push(Particle::new(sim.width, sim.height));
+                }
+            }
+
+            if st.player1_b {
+                sim.particles.clear();
+            }
+
+            render(sim, st);
         }
         request_animation_frame(f.borrow().as_ref().unwrap());
     }) as Box<dyn FnMut()>));
@@ -105,7 +140,7 @@ fn request_animation_loop(state: Rc<RefCell<Option<SimulationState>>>) {
     request_animation_frame(g.borrow().as_ref().unwrap());
 }
 
-fn render(sim: &mut SimulationState) {
+fn render(sim: &mut SimulationState, st: ControllerState) {
     let ctx = &sim.ctx;
 
     // 1. Clear / Fade
@@ -118,13 +153,13 @@ fn render(sim: &mut SimulationState) {
 
     // 3. Logic & Draw
     for i in 0..sim.particles.len() {
-        sim.particles[i].update(sim.width, sim.height);
+        sim.particles[i].update(sim.width, sim.height, &st);
 
         // Draw Dot
         let p = &sim.particles[i];
         ctx.begin_path();
         ctx.set_fill_style_str(&p.color);
-        ctx.arc(p.x, p.y, 2.0, 0.0, std::f64::consts::PI * 2.0)
+        ctx.arc(p.x, p.y, 0.75, 0.0, std::f64::consts::PI * 2.0)
             .unwrap();
         ctx.fill();
 
