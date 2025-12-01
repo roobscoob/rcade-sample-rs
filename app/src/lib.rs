@@ -1,194 +1,94 @@
+pub mod example;
 pub mod hook;
 
-use crate::hook::get_offscreen_canvas;
-use rand::Rng;
+use bevy::{
+    app::PluginsState,
+    light::DirectionalLightShadowMap,
+    log::{Level, LogPlugin},
+    prelude::*,
+    window::{RawHandleWrapper, WindowResolution, WindowWrapper},
+};
+use gloo_timers::callback::Interval;
 use rcade_plugin_input_classic::ClassicController;
-use rcade_plugin_input_classic::state::ControllerState;
-use std::cell::RefCell;
-use std::rc::Rc;
-use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
-use web_sys::js_sys;
-use web_sys::{DedicatedWorkerGlobalScope, OffscreenCanvasRenderingContext2d};
+use web_sys::{console, js_sys};
 
-// --- Config ---
-const PARTICLE_COUNT: usize = 350;
-const CONNECT_DISTANCE: f64 = 35.0;
+use crate::{
+    example::{camera_control_system, rotate, setup},
+    hook::{OffscreenWindowHandle, get_offscreen_canvas, setup_added_window},
+};
 
-struct Particle {
-    x: f64,
-    y: f64,
-    vx: f64,
-    vy: f64,
-    color: String,
-}
-
-impl Particle {
-    fn new(w: f64, h: f64) -> Self {
-        let mut rng = rand::rng();
-        Self {
-            x: rng.random_range(0.0..w),
-            y: rng.random_range(0.0..h),
-            // Slightly faster velocity since there is no interaction to "push" them
-            vx: rng.random_range(-0.2..0.2),
-            vy: rng.random_range(-0.2..0.2),
-            // Neon Cyan/Blue/Purple Palette
-            color: format!("hsl({}, 50%, 60%)", rng.random_range(100..300)),
-        }
-    }
-
-    fn update(&mut self, w: f64, h: f64, st: &ControllerState) {
-        if st.player1_up {
-            self.y += 1.0;
-        }
-
-        if st.player1_down {
-            self.y -= 1.0;
-        }
-
-        if st.player1_left {
-            self.x += 1.0;
-        }
-
-        if st.player1_right {
-            self.x -= 1.0;
-        }
-
-        self.x += self.vx;
-        self.y += self.vy;
-
-        // Bounce off walls
-        if self.x < 0.0 || self.x > w {
-            self.vx *= -1.0;
-        }
-        if self.y < 0.0 || self.y > h {
-            self.vy *= -1.0;
-        }
-    }
-}
-
-struct SimulationState {
-    ctx: OffscreenCanvasRenderingContext2d,
-    particles: Vec<Particle>,
-    width: f64,
-    height: f64,
-    controller: ClassicController,
+#[wasm_bindgen]
+pub struct BevyApp {
+    app: App,
 }
 
 #[wasm_bindgen(start)]
-pub async fn start() -> Result<(), JsValue> {
+pub async fn start() {
     console_error_panic_hook::set_once();
 
-    let controller = ClassicController::acquire().await.unwrap();
+    let mut app = BevyApp::new().await;
 
-    // Shared State
-    let state: Rc<RefCell<Option<SimulationState>>> = Rc::new(RefCell::new(None));
+    let mut frame_count = 0;
 
-    let canvas = get_offscreen_canvas().unwrap();
-    let width = canvas.width() as f64;
-    let height = canvas.height() as f64;
-
-    let ctx = canvas
-        .get_context("2d")
-        .unwrap()
-        .unwrap()
-        .dyn_into::<OffscreenCanvasRenderingContext2d>()
-        .unwrap();
-
-    let mut particles = Vec::with_capacity(PARTICLE_COUNT);
-    for _ in 0..PARTICLE_COUNT {
-        particles.push(Particle::new(width, height));
-    }
-
-    *state.borrow_mut() = Some(SimulationState {
-        ctx,
-        particles,
-        width,
-        height,
-        controller,
-    });
-
-    // Start the infinite loop
-    request_animation_loop(state.clone());
-
-    Ok(())
-}
-
-fn request_animation_loop(state: Rc<RefCell<Option<SimulationState>>>) {
-    let f = Rc::new(RefCell::new(None));
-    let g = f.clone();
-
-    *g.borrow_mut() = Some(Closure::wrap(Box::new(move || {
-        if let Some(sim) = state.borrow_mut().as_mut() {
-            let st = sim.controller.state();
-
-            if st.player1_a {
-                for _ in 0..10 {
-                    sim.particles.push(Particle::new(sim.width, sim.height));
-                }
-            }
-
-            if st.player1_b {
-                sim.particles.clear();
-            }
-
-            render(sim, st);
-        }
-        request_animation_frame(f.borrow().as_ref().unwrap());
-    }) as Box<dyn FnMut()>));
-
-    request_animation_frame(g.borrow().as_ref().unwrap());
-}
-
-fn render(sim: &mut SimulationState, st: ControllerState) {
-    let ctx = &sim.ctx;
-
-    // 1. Clear / Fade
-    ctx.set_global_composite_operation("source-over").unwrap();
-    ctx.set_fill_style_str("rgba(5, 5, 10, 0.2)"); // Very dark fade for trails
-    ctx.fill_rect(0.0, 0.0, sim.width, sim.height);
-
-    // 2. Glow Mode
-    ctx.set_global_composite_operation("lighter").unwrap();
-
-    // 3. Logic & Draw
-    for i in 0..sim.particles.len() {
-        sim.particles[i].update(sim.width, sim.height, &st);
-
-        // Draw Dot
-        let p = &sim.particles[i];
-        ctx.begin_path();
-        ctx.set_fill_style_str(&p.color);
-        ctx.arc(p.x, p.y, 0.75, 0.0, std::f64::consts::PI * 2.0)
+    loop {
+        let perf = js_sys::global()
+            .dyn_into::<web_sys::WorkerGlobalScope>()
+            .unwrap()
+            .performance()
             .unwrap();
-        ctx.fill();
 
-        // Draw Lines (The Constellation)
-        for j in (i + 1)..sim.particles.len() {
-            let p2 = &sim.particles[j];
-            let dx = p.x - p2.x;
-            let dy = p.y - p2.y;
-            let dist_sq = dx * dx + dy * dy;
-
-            // Avoid square root for performance unless necessary
-            if dist_sq < (CONNECT_DISTANCE * CONNECT_DISTANCE) {
-                let dist = dist_sq.sqrt();
-                let alpha = 1.0 - (dist / CONNECT_DISTANCE);
-
-                ctx.begin_path();
-                ctx.set_stroke_style_str(&format!("rgba(100, 200, 255, {})", alpha / 10.0));
-                ctx.set_line_width(0.5);
-                ctx.move_to(p.x, p.y);
-                ctx.line_to(p2.x, p2.y);
-                ctx.stroke();
-            }
-        }
+        let a = perf.now();
+        app.update();
+        frame_count += 1;
+        let b = perf.now();
+        gloo_timers::future::sleep(std::time::Duration::from_nanos(0)).await;
+        let c = perf.now();
     }
 }
 
-fn request_animation_frame(f: &Closure<dyn FnMut()>) {
-    let global = js_sys::global().unchecked_into::<DedicatedWorkerGlobalScope>();
-    global
-        .request_animation_frame(f.as_ref().unchecked_ref())
-        .ok();
+impl BevyApp {
+    pub async fn new() -> Self {
+        let mut app = App::new();
+        let canvas = get_offscreen_canvas().unwrap();
+        let controller = ClassicController::acquire().await.unwrap();
+
+        app.add_plugins(
+            DefaultPlugins
+                .set(bevy::window::WindowPlugin {
+                    primary_window: Some(Window {
+                        resolution: WindowResolution::new(336, 262),
+                        ..Default::default()
+                    }),
+                    exit_condition: bevy::window::ExitCondition::DontExit,
+                    ..Default::default()
+                })
+                .set(ImagePlugin::default_nearest())
+                .set(LogPlugin {
+                    level: Level::WARN,
+                    ..Default::default()
+                }),
+        )
+        .insert_resource(DirectionalLightShadowMap { size: 512 })
+        .insert_non_send_resource(controller)
+        .add_systems(PreStartup, setup_added_window)
+        .add_systems(Startup, setup)
+        .add_systems(Update, rotate)
+        .add_systems(Update, camera_control_system);
+
+        app.insert_non_send_resource(canvas);
+
+        BevyApp { app }
+    }
+
+    pub fn update(&mut self) {
+        if self.app.plugins_state() != PluginsState::Cleaned {
+            if self.app.plugins_state() == PluginsState::Ready {
+                self.app.finish();
+                self.app.cleanup();
+            }
+        } else {
+            self.app.update();
+        }
+    }
 }
