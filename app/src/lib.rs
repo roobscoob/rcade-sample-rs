@@ -106,6 +106,13 @@ impl BevyApp {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::GL,
             flags: wgpu::InstanceFlags::default(),
+            backend_options: wgpu::BackendOptions {
+                gl: wgpu::GlBackendOptions {
+                    gles_minor_version: wgpu::Gles3MinorVersion::Version0,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
             ..Default::default()
         });
 
