@@ -32,7 +32,8 @@ bevy = { version = "0.17.3", default-features = false, features = [
     "bevy_sprite",
     "bevy_window",
     "bevy_pbr",
-    "webgpu",
+    "webgl2",
 ] }
 raw-window-handle = { version = "0.6.2", default-features = false }
 gloo-timers = { version = "0.3.0", features = ["futures"] }
+wgpu = { version = "26.0.1", features = ["webgl"] }

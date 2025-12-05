@@ -1,17 +1,26 @@
 pub mod example;
 pub mod hook;
 
+use std::sync::Arc;
+
 use bevy::{
     app::PluginsState,
     light::DirectionalLightShadowMap,
     log::{Level, LogPlugin},
     prelude::*,
-    window::{RawHandleWrapper, WindowResolution, WindowWrapper},
+    render::{
+        RenderDebugFlags, RenderPlugin,
+        renderer::{
+            RenderAdapter, RenderAdapterInfo, RenderDevice, RenderInstance, RenderQueue,
+            WgpuWrapper,
+        },
+        settings::{Backends, RenderCreation, WgpuSettings},
+    },
+    window::WindowResolution,
 };
-use gloo_timers::callback::Interval;
 use rcade_plugin_input_classic::ClassicController;
 use wasm_bindgen::prelude::*;
-use web_sys::{console, js_sys};
+use web_sys::console;
 
 use crate::{
     example::{camera_control_system, rotate, setup},
@@ -29,21 +38,9 @@ pub async fn start() {
 
     let mut app = BevyApp::new().await;
 
-    let mut frame_count = 0;
-
     loop {
-        let perf = js_sys::global()
-            .dyn_into::<web_sys::WorkerGlobalScope>()
-            .unwrap()
-            .performance()
-            .unwrap();
-
-        let a = perf.now();
         app.update();
-        frame_count += 1;
-        let b = perf.now();
         gloo_timers::future::sleep(std::time::Duration::from_nanos(0)).await;
-        let c = perf.now();
     }
 }
 
@@ -52,6 +49,11 @@ impl BevyApp {
         let mut app = App::new();
         let canvas = get_offscreen_canvas().unwrap();
         let controller = ClassicController::acquire().await.unwrap();
+
+        // Manually initialize WebGL2 rendering resources
+        let render_resources = Self::initialize_webgl2(&canvas)
+            .await
+            .expect("Failed to initialize WebGL2 renderer");
 
         app.add_plugins(
             DefaultPlugins
@@ -63,22 +65,95 @@ impl BevyApp {
                     exit_condition: bevy::window::ExitCondition::DontExit,
                     ..Default::default()
                 })
+                .set(RenderPlugin {
+                    debug_flags: RenderDebugFlags::default(),
+                    render_creation: RenderCreation::Manual(
+                        bevy::render::settings::RenderResources(
+                            render_resources.device.into(),
+                            RenderQueue(Arc::new(WgpuWrapper::new(render_resources.queue))),
+                            RenderAdapterInfo(WgpuWrapper::new(
+                                render_resources.adapter.get_info(),
+                            )),
+                            RenderAdapter(Arc::new(WgpuWrapper::new(render_resources.adapter))),
+                            RenderInstance(Arc::new(WgpuWrapper::new(render_resources.instance))),
+                        ),
+                    ),
+                    synchronous_pipeline_compilation: false,
+                })
                 .set(ImagePlugin::default_nearest())
                 .set(LogPlugin {
-                    level: Level::WARN,
+                    level: Level::TRACE,
                     ..Default::default()
                 }),
         )
         .insert_resource(DirectionalLightShadowMap { size: 512 })
         .insert_non_send_resource(controller)
+        .insert_non_send_resource(canvas)
         .add_systems(PreStartup, setup_added_window)
         .add_systems(Startup, setup)
         .add_systems(Update, rotate)
         .add_systems(Update, camera_control_system);
 
-        app.insert_non_send_resource(canvas);
-
         BevyApp { app }
+    }
+
+    async fn initialize_webgl2(
+        canvas: &web_sys::OffscreenCanvas,
+    ) -> Result<RenderResources, String> {
+        console::log_1(&"Initializing WebGL2 manually...".into());
+
+        // Create wgpu instance with GL backend
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::GL,
+            flags: wgpu::InstanceFlags::default(),
+            ..Default::default()
+        });
+
+        console::log_1(&"Created wgpu instance".into());
+
+        // Create the window handle and surface
+        let window_handle = OffscreenWindowHandle::new(canvas);
+
+        let surface_target = unsafe { wgpu::SurfaceTargetUnsafe::from_window(&window_handle) }
+            .map_err(|e| format!("Failed to create surface target: {:?}", e))?;
+
+        let surface = unsafe { instance.create_surface_unsafe(surface_target) }
+            .map_err(|e| format!("Failed to create surface: {:?}", e))?;
+
+        console::log_1(&"Created surface from OffscreenCanvas".into());
+
+        // Request adapter with the compatible surface
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+            })
+            .await
+            .map_err(|e| format!("Failed to find suitable GPU adapter: {e:?}"))?;
+
+        console::log_1(&format!("Found adapter: {:?}", adapter.get_info()).into());
+
+        // Request device and queue with WebGL2 compatible limits
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("bevy_device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::downlevel_webgl2_defaults()
+                    .using_resolution(adapter.limits()),
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| format!("Failed to create device: {:?}", e))?;
+
+        console::log_1(&"Created device and queue".into());
+
+        Ok(RenderResources {
+            instance,
+            adapter,
+            device,
+            queue,
+        })
     }
 
     pub fn update(&mut self) {
@@ -91,4 +166,11 @@ impl BevyApp {
             self.app.update();
         }
     }
+}
+
+struct RenderResources {
+    instance: wgpu::Instance,
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
 }
