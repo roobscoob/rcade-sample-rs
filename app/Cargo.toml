@@ -26,12 +26,16 @@ console_error_panic_hook = "0.1.7"
 rand = "0.9.2"
 rcade-plugin-input-classic = "0.2"
 bevy = { version = "0.17.3", default-features = false, features = [
-    "tonemapping_luts",
     "zstd_rust",
-    "bevy_log",
-    "bevy_sprite",
-    "bevy_window",
+    "bevy_core_pipeline",
     "bevy_pbr",
+    "bevy_render",
+    "bevy_asset",
+    "bevy_scene",
+    "bevy_window",
+    "bevy_sprite",
+    "bevy_log",
+    "tonemapping_luts",
     "webgl2",
 ] }
 raw-window-handle = { version = "0.6.2", default-features = false }

@@ -1,12 +1,26 @@
-use std::{ptr::NonNull, thread::ThreadId};
+// Here be dragons!
+//
+// This module contains glue code to interface Bevy's rendering with an OffscreenCanvas
+// in a web worker environment. It sets up the necessary window and display handles
+// for wgpu to render to the OffscreenCanvas using WebGL2.
+//
+// This is required for the project architecture and should not be modified lightly.
+
+use std::{ptr::NonNull, sync::Arc, thread::ThreadId};
 
 use bevy::{
+    app::PluginGroupBuilder,
     prelude::*,
-    window::{RawHandleWrapper, WindowWrapper},
+    render::{
+        RenderDebugFlags, RenderPlugin,
+        renderer::{RenderAdapter, RenderAdapterInfo, RenderInstance, RenderQueue, WgpuWrapper},
+        settings::RenderCreation,
+    },
+    window::{RawHandleWrapper, WindowResolution, WindowWrapper},
 };
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use wasm_bindgen::{JsCast, JsValue, prelude::wasm_bindgen};
-use web_sys::OffscreenCanvas;
+use web_sys::{OffscreenCanvas, console};
 
 #[wasm_bindgen]
 extern "C" {
@@ -93,4 +107,110 @@ pub fn setup_added_window(
         .expect("to create offscreen raw handle wrapper. If this fails, multiple threads are trying to access the same canvas!");
 
     commands.entity(entity).insert(handle);
+}
+
+async fn initialize_webgl2(canvas: &web_sys::OffscreenCanvas) -> Result<RenderResources, String> {
+    console::log_1(&"Initializing WebGL2 manually...".into());
+
+    // Create wgpu instance with GL backend
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::GL,
+        flags: wgpu::InstanceFlags::default(),
+        backend_options: wgpu::BackendOptions {
+            gl: wgpu::GlBackendOptions {
+                gles_minor_version: wgpu::Gles3MinorVersion::Version0,
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+
+    console::log_1(&"Created wgpu instance".into());
+
+    // Create the window handle and surface
+    let window_handle = OffscreenWindowHandle::new(canvas);
+
+    let surface_target = unsafe { wgpu::SurfaceTargetUnsafe::from_window(&window_handle) }
+        .map_err(|e| format!("Failed to create surface target: {:?}", e))?;
+
+    let surface = unsafe { instance.create_surface_unsafe(surface_target) }
+        .map_err(|e| format!("Failed to create surface: {:?}", e))?;
+
+    console::log_1(&"Created surface from OffscreenCanvas".into());
+
+    // Request adapter with the compatible surface
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: Some(&surface),
+            force_fallback_adapter: false,
+        })
+        .await
+        .map_err(|e| format!("Failed to find suitable GPU adapter: {e:?}"))?;
+
+    console::log_1(&format!("Found adapter: {:?}", adapter.get_info()).into());
+
+    // Request device and queue with WebGL2 compatible limits
+    let (device, queue) = adapter
+        .request_device(&wgpu::DeviceDescriptor {
+            label: Some("bevy_device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::downlevel_webgl2_defaults()
+                .using_resolution(adapter.limits()),
+            ..Default::default()
+        })
+        .await
+        .map_err(|e| format!("Failed to create device: {:?}", e))?;
+
+    console::log_1(&"Created device and queue".into());
+
+    Ok(RenderResources {
+        instance,
+        adapter,
+        device,
+        queue,
+    })
+}
+
+struct RenderResources {
+    instance: wgpu::Instance,
+    adapter: wgpu::Adapter,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+}
+
+pub trait RcadePluginExt {
+    fn with_rcade(self, canvas: OffscreenCanvas) -> impl Future<Output = PluginGroupBuilder>
+    where
+        Self: Sized;
+}
+
+impl RcadePluginExt for DefaultPlugins {
+    async fn with_rcade(self, canvas: OffscreenCanvas) -> PluginGroupBuilder {
+        // Manually initialize WebGL2 rendering resources
+        let render_resources = initialize_webgl2(&canvas)
+            .await
+            .expect("Failed to initialize WebGL2 renderer");
+
+        self.set(bevy::window::WindowPlugin {
+            primary_window: Some(Window {
+                resolution: WindowResolution::new(336, 262),
+                ..Default::default()
+            }),
+            exit_condition: bevy::window::ExitCondition::DontExit,
+            ..Default::default()
+        })
+        .set(RenderPlugin {
+            debug_flags: RenderDebugFlags::default(),
+            render_creation: RenderCreation::Manual(bevy::render::settings::RenderResources(
+                render_resources.device.into(),
+                RenderQueue(Arc::new(WgpuWrapper::new(render_resources.queue))),
+                RenderAdapterInfo(WgpuWrapper::new(render_resources.adapter.get_info())),
+                RenderAdapter(Arc::new(WgpuWrapper::new(render_resources.adapter))),
+                RenderInstance(Arc::new(WgpuWrapper::new(render_resources.instance))),
+            )),
+            synchronous_pipeline_compilation: false,
+        })
+    }
 }

@@ -17,6 +17,26 @@ self.onmessage = function (event) {
     // Check for the specific 'CANVAS' command type and the OffscreenCanvas object
     if (typeof data === 'object' && data !== null && data.type === "CANVAS" && data.canvas instanceof OffscreenCanvas) {
         self.RUST_OFFSCREEN_CANVAS = data.canvas;
+
+        const ORIGINAL_GET_CONTEXT = self.RUST_OFFSCREEN_CANVAS.getContext.bind(self.RUST_OFFSCREEN_CANVAS);
+
+        self.RUST_OFFSCREEN_CANVAS.getContext = (...args) => {
+            console.log("get_context", args);
+
+            if (args[0] === "webgl2") {
+                // append desynchronized to webgl2 context attributes
+                if (args.length < 2 || typeof args[1] !== 'object' || args[1] === null) {
+                    args[1] = {};
+                }
+                args[1].desynchronized = true;
+                console.debug("Modified webgl2 context attributes to include desynchronized: true", args[1]);
+            } else {
+                console.debug(`getContext called with context type: ${args[0]}`);
+            }
+
+            return ORIGINAL_GET_CONTEXT(...args)
+        }
+
         console.debug("Worker successfully received OffscreenCanvas from 'CANVAS' command.", self.RUST_OFFSCREEN_CANVAS);
 
         // Stop listening for further messages now that the canvas is received.
