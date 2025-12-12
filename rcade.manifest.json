@@ -1,10 +1,11 @@
 {
   "name": "rose-sample-rs",
-  "display_name": "rose-sample-rs",
+  "display_name": "3D Bevy Demo",
   "description": "rose-sample-rs",
   "visibility": "public",
   "authors": {
-    "display_name": "Temp"
+    "display_name": "Rose Kodsi-Hall",
+    "recurse_id": 6834
   },
   "dependencies": []
 }
